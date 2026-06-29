@@ -41,6 +41,12 @@ These are restored automatically on first build:
 
 ---
 
+## Quick Help
+
+Running the executable with no arguments prints a condensed version of this guide directly to the console — usage, examples, options and troubleshooting — so a new user can get oriented without opening this document.
+
+---
+
 ## Basic Usage
 
 ```
@@ -99,7 +105,8 @@ The tool balances file size against quality and OCR accuracy:
 - **Tiles are downloaded** at the requested resolution (default: full resolution, ~1800×2900px per page)
 - **OCR runs** on the full resolution image for best accuracy
 - **The image saved to the PDF** is downsampled to a target height of 900px and converted to greyscale at JPEG quality 40 — sufficient for comfortable reading while keeping file sizes manageable
-- **An invisible text layer** is placed behind each page image, enabling text search and copy-paste in any PDF viewer
+- **An invisible text layer** is placed behind each page image, with each word sized to match its real OCR bounding box dimensions — this is what allows both text search and accurate copy-to-clipboard selection in any PDF viewer, rather than search-only matching
+- **PDF image sizing is resolution-independent**: the saved page image always targets a fixed 900px height regardless of the `--resolution` level used for download, and is never upsampled beyond the source image's native size
 
 Typical output file sizes for a 100-page publication are 4–8MB.
 
@@ -141,3 +148,6 @@ Use `--pages` to re-run just the failed section. The server occasionally returns
 
 **PDF text search not finding words**
 OCR on scanned historical documents is imperfect. Tesseract will miss words on damaged, faded or unusual typefaces. This is expected behaviour — the tool faithfully reports what Tesseract finds without attempting to fill gaps.
+
+**Copy-to-clipboard selects the wrong text**
+The invisible text layer is sized per-word to approximate the real printed word's dimensions, which allows accurate selection in most PDF viewers. On unusual page layouts or where OCR bounding boxes are noisy, selection may still be imprecise even though search continues to work correctly.
