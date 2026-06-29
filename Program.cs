@@ -12,7 +12,12 @@ namespace BgsDownloader;
 // ── Data types ────────────────────────────────────────────────────────────────
 
 record ImageInfo(int Width, int Height, int TileWidth, int TileHeight, int ResolutionLevels);
-record WordPosition(float X, float Y, string Text);
+
+// WordPosition now carries the bounding box width/height so we can scale
+// the invisible font to roughly match the OCR'd word's actual dimensions.
+// This is what makes copy-to-clipboard select the correct text rather than
+// just enabling search.
+record WordPosition(float X, float Y, float Width, float Height, string Text);
 
 // ── IIPImage client ───────────────────────────────────────────────────────────
 
@@ -200,6 +205,9 @@ class OcrProcessor : IDisposable
     /// <summary>
     /// Run Tesseract on an ImageSharp image and return word positions
     /// scaled to PDF coordinate space (origin top-left, matching PdfSharp).
+    /// Width and height are included so the invisible text layer can be
+    /// drawn at a font size that approximates each word's real dimensions —
+    /// without this, search works but copy-to-clipboard selects the wrong text.
     /// </summary>
     public List<WordPosition> GetWordPositions(Image<Rgb24> image,
                                                 float pdfWidthPt, float pdfHeightPt)
@@ -229,7 +237,9 @@ class OcrProcessor : IDisposable
                     // PdfSharp origin is top-left — use Y1 (top of word box), no flip
                     float pdfX = bbox.X1 * scaleX;
                     float pdfY = bbox.Y1 * scaleY;
-                    words.Add(new WordPosition(pdfX, pdfY, text));
+                    float pdfWidth = (bbox.X2 - bbox.X1) * scaleX;
+                    float pdfHeight = (bbox.Y2 - bbox.Y1) * scaleY;
+                    words.Add(new WordPosition(pdfX, pdfY, pdfWidth, pdfHeight, text));
                 }
             }
         }
@@ -250,6 +260,28 @@ class PdfBuilder
     // Target height in pixels for PDF image storage — resolution-independent.
     // OCR always runs on the full downloaded image regardless of this value.
     private const int TargetPdfImageHeight = 900;
+
+    /// <summary>
+    /// Measures a string at a reference font size and returns the scale factor
+    /// needed to make it match the target width. Used to size each word's
+    /// invisible text so PDF viewers select the correct character span on
+    /// copy, not just match it on search.
+    /// </summary>
+    private static float CalculateFontSize(XGraphics gfx, string text,
+                                            float targetWidth, float targetHeight)
+    {
+        const float referenceSize = 12f;
+        var referenceFont = new XFont("Arial", referenceSize);
+        var measuredSize = gfx.MeasureString(text, referenceFont);
+
+        if (measuredSize.Width <= 0) return Math.Max(targetHeight, 1f);
+
+        float scaleFromWidth = (float)targetWidth / (float)measuredSize.Width;
+        float fontSize = referenceSize * scaleFromWidth;
+
+        // Guard against degenerate sizes from noisy OCR boxes
+        return Math.Clamp(fontSize, 1f, targetHeight * 2f);
+    }
 
     public static async Task BuildAsync(
         string pubId,
@@ -321,13 +353,18 @@ class PdfBuilder
                 var wordPositions = ocr.GetWordPositions(pageImage, pdfW, pdfH);
                 Console.WriteLine($" {wordPositions.Count} words found");
 
-                // Invisible text — size 1, white on white
-                var font = new XFont("Arial", 1);
+                // Invisible text — white on white, sized per-word to match
+                // the OCR bounding box so copy-to-clipboard selects correctly
                 var brush = new XSolidBrush(XColor.FromArgb(1, 255, 255, 255));
                 foreach (var word in wordPositions)
                 {
+                    float fontSize = CalculateFontSize(gfx, word.Text, word.Width, word.Height);
+                    var font = new XFont("Arial", fontSize);
+
+                    // DrawString baseline in PdfSharp aligns to top of bounding box
+                    // when using XStringFormat default — position at word top-left
                     gfx.DrawString(word.Text, font, brush,
-                                   new XPoint(word.X, word.Y));
+                                   new XPoint(word.X, word.Y + word.Height));
                 }
             }
             catch (Exception ex)
@@ -399,7 +436,8 @@ HOW THE PDF IS BUILT
   quality 40 — giving typical file sizes of 4-8MB per 100 pages.
   This target height is resolution-independent: if a lower --resolution
   level is used the source image is never upsampled beyond its native size.
-  An invisible Tesseract OCR text layer enables search and copy-paste.
+  An invisible Tesseract OCR text layer, sized per-word to match each
+  word's real dimensions, enables both search and accurate copy-to-clipboard.
 
 TROUBLESHOOTING
   No pages found       Check pub-id is correct in the BGS viewer URL
