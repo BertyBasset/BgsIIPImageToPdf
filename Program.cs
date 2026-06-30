@@ -279,10 +279,14 @@ class PdfBuilder
         float scaleFromWidth = (float)targetWidth / (float)measuredSize.Width;
         float fontSize = referenceSize * scaleFromWidth;
 
-        // Guard against degenerate sizes from noisy OCR boxes
-        return Math.Clamp(fontSize, 1f, targetHeight * 2f);
-    }
+        // Guard against degenerate bounding boxes from noisy OCR (e.g. stray
+        // diacritics) where targetHeight is smaller than the minimum clamp value
+        float minSize = 1f;
+        float maxSize = Math.Max(targetHeight * 2f, minSize);
 
+        return Math.Clamp(fontSize, minSize, maxSize);
+    }
+    
     public static async Task BuildAsync(
         string pubId,
         List<(int PageNum, ImageInfo Info)> pages,
